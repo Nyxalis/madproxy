@@ -7,7 +7,6 @@ It's reliable and gives easy domains for users to remmember the servers and shar
 - ``config.yml`` -> Contains all Config realated to the proxy.
 - ``servers.json`` -> Containers all the servers that the proxy will reverse.
 
-<br>
 
 ``config.yml``
 ```yml
