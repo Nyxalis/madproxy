@@ -6,9 +6,14 @@ use serde_json;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerEntry {
     pub id: String,
-    pub hostname: String,
-    #[serde(rename = "backendServer")]
+    pub hostnames: Vec<String>,
+    #[serde(rename = "backend_server")]
     pub backend_server: String,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+struct ServersFile {
+    servers: Vec<ServerEntry>
 }
 
 #[derive(Debug)]
@@ -27,19 +32,24 @@ impl Clone for Servers {
 impl Servers {
     pub fn load() -> Result<Self> {
         let content = fs::read_to_string("servers.json")?;
-        let entries = serde_json::from_str(&content)?;
-        Ok(Self { entries })
+        let servers_file: ServersFile = serde_json::from_str(&content)?;
+        Ok(Self { 
+            entries: servers_file.servers 
+        })
     }
 
     pub fn get_by_hostname(&self, hostname: &str) -> Option<ServerEntry> {
         self.entries
             .iter()
-            .find(|s| s.hostname == hostname)
+            .find(|s| s.hostnames.contains(&hostname.to_string()))
             .cloned()
     }
 
     pub fn save(&self) -> Result<()> {
-        let json = serde_json::to_string_pretty(&self.entries)?;
+        let servers_file = ServersFile {
+            servers: self.entries.clone()
+        };
+        let json = serde_json::to_string_pretty(&servers_file)?;
         fs::write("servers.json", json)?;
         Ok(())
     }
@@ -54,7 +64,7 @@ impl Servers {
     pub fn remove_server(&self, hostname: &str) -> Result<bool> {
         let mut entries = self.entries.clone();
         let len = entries.len();
-        entries.retain(|s| s.hostname != hostname);
+        entries.retain(|s| s.hostnames.contains(&hostname.to_string()));
         let removed = entries.len() != len;
         if removed {
             self.save()?;
@@ -64,7 +74,7 @@ impl Servers {
 
     pub fn update_server(&self, hostname: &str, new_entry: ServerEntry) -> Result<bool> {
         let mut entries = self.entries.clone();
-        if let Some(entry) = entries.iter_mut().find(|s| s.hostname == hostname) {
+        if let Some(entry) = entries.iter_mut().find(|s| s.hostnames.contains(&hostname.to_string())) {
             *entry = new_entry;
             self.save()?;
             Ok(true)
