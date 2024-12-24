@@ -1,6 +1,8 @@
 [package]
 name = "madproxy"
 version = "0.1.0"
+authors = ["nyxalis. <thayaganthusiyanthan@gmail.com>"]
 edition = "2021"
 
 [dependencies]
+toml = "0.8.19"
