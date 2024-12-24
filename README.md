@@ -31,16 +31,18 @@ api_key: "ptlc_Dweana6FNGD5XnSgKKXWLbpM29gCDp51j7ddhe6tH0A"
 
 ``servers.json``
 ```json
-[
-    {
-        "id": "01cd2223",
-        "hostname": "join.nyxalis.xyz",
-        "backendServer": "panel.novakraft.net:15577"
-    },
-    {
-        "id": "1d38d999",
-        "hostname": "play.nyxalis.xyz",
-        "backendServer": "panel.novakraft.net:15565"
-    }
-]
+{
+    "servers": [
+        {
+            "id": "01cd2223",
+            "hostnames": ["join.nyxalis.xyz"],
+            "backend_server": "panel.novakraft.net:15577"
+        },
+        {
+            "id": "1d38d999",
+            "hostnames": ["play.nyxalis.xyz"],
+            "backend_server": "panel.novakraft.net:15565"
+        }
+    ]
+}
 ```
