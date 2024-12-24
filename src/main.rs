@@ -159,6 +159,11 @@ async fn handle_client(
     let mut server = server_result.unwrap();
     server.set_nodelay(true)?;
 
+    // Only increment player count if this is a login attempt AND we successfully connected
+    if *handshake.get_next_state() == NextState::Login {
+        servers.increment_player_count(host);
+    }
+
     // Send PROXY protocol header
     let proxy = ProxyProtocol::new(addr, server_addr);
     let header = proxy.generate_header();
@@ -171,6 +176,10 @@ async fn handle_client(
     let (mut client_reader, mut client_writer) = tokio::io::split(stream);
     let (mut server_reader, mut server_writer) = tokio::io::split(server);
     
+    let host = host.to_string();
+    let servers_clone = servers.clone();
+    let next_state = handshake.get_next_state().clone();
+    
     tokio::spawn(async move {
         let result = tokio::io::copy(&mut client_reader, &mut server_writer).await;
         if let Some(err) = result.err() {
@@ -178,6 +187,10 @@ async fn handle_client(
                 "{}: An error occurred in client-to-server bridge. Maybe disconnected: {}",
                 addr, err
             );
+        }
+        // Only decrement if this was a login connection
+        if next_state == NextState::Login {
+            servers_clone.decrement_player_count(&host);
         }
     });
     
