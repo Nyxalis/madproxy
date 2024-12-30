@@ -23,10 +23,10 @@ offline_server:
   motd:
     text: "§c§lServer is offline §r\n§l§7AD: §fGet free 24/7 hosting @ §2xeh6.co.uk"
     protocol_name: "§cServer Offline"
-auto_start: false
-panel_link: "https://panel.novakraft.net"
-api_key: "ptlc_Dweana6FNGD5XnSgKKXWLbpM29gCDp51j7ddhe6tH0A"
-
+backend_server: "212.87.213.125"
+port_range:
+  start: 25565
+  end: 25575
 ```
 
 ``servers.json``

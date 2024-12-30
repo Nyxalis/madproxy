@@ -9,24 +9,18 @@ pub mod utils {
 pub mod core {
     pub mod config;
     pub mod proxy;
-    pub mod servers;
 }
 
 use anyhow::Result;
 use crate::core::config::Config;
 use crate::utils::packet::{HandshakeRequest, NextState};
-use crate::core::servers::Servers;
 use crate::core::proxy::ProxyProtocol;
 use std::env;
 use std::net::SocketAddr;
 use std::path::Path;
-use std::net::ToSocketAddrs;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::io::AsyncWriteExt;
-use reqwest::Client;
 use std::io::Cursor;
-use serde_json::json;
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use crate::utils::packet;
 
 #[tokio::main]
@@ -42,10 +36,9 @@ async fn main() {
     env_logger::init();
 
     let config = load_conf();
-    let servers = Servers::load().expect("Failed to load servers.json");
     debug!("Configuration: {:?}", config);
 
-    start(config, servers).await;
+    start(config).await;
 }
 
 fn launch_sequence() -> Result<(), Box<dyn std::error::Error>> {
@@ -62,32 +55,42 @@ fn launch_sequence() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+async fn start(config: Config) {
+    let port_range = config.port_range.clone();
 
-async fn start(config: Config, servers: Servers) {
-    let listen_addr = config.get_listen_addr();
-    info!("Listening on {}", listen_addr);
-    let mut listener = TcpListener::bind(listen_addr).await.unwrap();
-    
-    loop {
-        let client = accept_client(&mut listener).await;
-        if let Err(e) = client {
-            error!("Failed to accept a client: {}", e);
-            continue;
-        }
-        let (stream, addr) = client.unwrap();
-        debug!("Client connected from {:?}", addr);
+    for port in port_range.start..=port_range.end {
+        let listen_addr = format!("0.0.0.0:{}", port);
+        let listener = TcpListener::bind(&listen_addr).await.unwrap();
+        info!("Listening on {}", listen_addr);
+
         let config = config.clone();
-        let servers = servers.clone();
         tokio::spawn(async move {
-            let result = handle_client(&config, &servers, stream, addr).await;
-            if let Err(e) = result {
-                error!("{}: An error occurred: {}", addr, e);
+            loop {
+                match accept_client(&listener).await {
+                    Ok((stream, addr)) => {
+                        debug!("Client connected from {:?}", addr);
+                        let config = config.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = handle_client(&config, stream, addr, port).await {
+                                error!("{}: An error occurred: {}", addr, e);
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        error!("Failed to accept a client: {}", e);
+                    }
+                }
             }
         });
     }
+
+    // Prevent the main function from exiting immediately
+    loop {
+        tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+    }
 }
 
-async fn accept_client(listener: &mut TcpListener) -> Result<(TcpStream, SocketAddr)> {
+async fn accept_client(listener: &TcpListener) -> Result<(TcpStream, SocketAddr)> {
     let client = listener.accept().await?;
     client.0.set_nodelay(true)?;
     Ok(client)
@@ -95,62 +98,21 @@ async fn accept_client(listener: &mut TcpListener) -> Result<(TcpStream, SocketA
 
 async fn handle_client(
     config: &Config, 
-    servers: &Servers, 
     mut stream: TcpStream, 
-    addr: SocketAddr
+    addr: SocketAddr,
+    port: u16
 ) -> Result<()> {
     let handshake = HandshakeRequest::read(&mut stream).await?;
-    let host: &str = &handle_hostname(handshake.get_host()).await;
-    let server_entry = servers.get_by_hostname(host);
-
-    info!(
-        "{}: {}: {}:{} -> {}",
-        addr,
-        handshake.get_next_state(),
-        host,
-        handshake.get_port(),
-        server_entry
-            .as_ref()
-            .map(|s| s.backend_server.to_string())
-            .unwrap_or_else(|| "unknown".to_string())
-    );
-
-    if server_entry.is_none() {
-        if *handshake.get_next_state() == NextState::Login {
-            let mut kick_msg = config.get_unknown_host_kick_msg();
-            write_string(&mut stream, &mut &**&mut kick_msg).await?;
-        } else if *handshake.get_next_state() == NextState::Status {
-            let mut motd = config.get_unknown_host_motd();
-            write_string(&mut stream, &mut &**&mut motd).await?;
-        }
-        return Ok(());
-    }
-
-    let server_entry = server_entry.unwrap();
-    let server_id = &server_entry.id;
-
-    // Try to connect to the target server
-    let server_addr = server_entry.backend_server.to_socket_addrs()?.next().unwrap();
+    let server_addr = format!("{}:{}", config.backend_server, port);
     let server_result = TcpStream::connect(&server_addr).await;
 
     if let Err(e) = server_result {
         warn!("Failed to connect to backend server: {}", e);
         if *handshake.get_next_state() == NextState::Login {
-            if config.auto_start {
-                // Try to start the server
-                if let Err(e) = start_server(config, server_id).await {
-                    error!("Failed to start server: {}", e);
-                } else {
-                    info!("Server start signal sent for {}", server_id);
-                }
-                let mut kick_msg = config.get_offline_server_starting_msg();
-                write_string(&mut stream, &mut &**&mut kick_msg).await?;
-            } else {
-                let mut kick_msg = config.get_offline_server_kick_msg();
-                write_string(&mut stream, &mut &**&mut kick_msg).await?;
-            }
+            let mut kick_msg = config.get_offline_server_kick_msg();
+            write_string(&mut stream, &mut &**&mut kick_msg).await?;
         } else if *handshake.get_next_state() == NextState::Status {
-            let mut motd = config.get_offline_server_motd_not_starting(server_id).await;
+            let mut motd = config.get_offline_server_motd_not_starting("").await;
             write_string(&mut stream, &mut &**&mut motd).await?;
         }
         return Ok(());
@@ -159,13 +121,8 @@ async fn handle_client(
     let mut server = server_result.unwrap();
     server.set_nodelay(true)?;
 
-    // Only increment player count if this is a login attempt AND we successfully connected
-    if *handshake.get_next_state() == NextState::Login {
-        servers.increment_player_count(host);
-    }
-
     // Send PROXY protocol header
-    let proxy = ProxyProtocol::new(addr, server_addr);
+    let proxy = ProxyProtocol::new(addr, server.peer_addr().unwrap());
     let header = proxy.generate_header();
     server.write_all(&header).await?;
 
@@ -175,11 +132,7 @@ async fn handle_client(
 
     let (mut client_reader, mut client_writer) = tokio::io::split(stream);
     let (mut server_reader, mut server_writer) = tokio::io::split(server);
-    
-    let host = host.to_string();
-    let servers_clone = servers.clone();
-    let next_state = handshake.get_next_state().clone();
-    
+
     tokio::spawn(async move {
         let result = tokio::io::copy(&mut client_reader, &mut server_writer).await;
         if let Some(err) = result.err() {
@@ -188,12 +141,8 @@ async fn handle_client(
                 addr, err
             );
         }
-        // Only decrement if this was a login connection
-        if next_state == NextState::Login {
-            servers_clone.decrement_player_count(&host);
-        }
     });
-    
+
     let result = tokio::io::copy(&mut server_reader, &mut client_writer).await;
     if let Some(err) = result.err() {
         debug!(
@@ -204,59 +153,19 @@ async fn handle_client(
     Ok(())
 }
 
-async fn handle_hostname(hostname: &str) -> String {
-    let mut host: String = hostname.to_owned();
-
-    // TCPShield Support (UNTESTED!)
-    if host.contains("///") {
-        let parts = host.split("///");
-        for part in parts {
-            host = part.to_owned();
-            break;
-        }
-    }
-
-    // Forge Support
-    if host.contains("FML2") {
-        host = host.replace("FML2", "");
-    } else if host.contains("FML") {
-        host = host.replace("FML", "");
-    }
-    host
-}
-
-async fn write_string(stream: &mut TcpStream, string: &mut &str) -> Result<()> {
-    let mut temp: Cursor<Vec<u8>> = Cursor::new(Vec::new());
-    crate::utils::packet::write_var_int(&mut temp, 0).await?;
-    crate::utils::packet::write_var_int(&mut temp, string.len() as i32).await?;
-    temp.write_all(&string.as_bytes()).await?;
-    let temp = temp.into_inner();
-    crate::utils::packet::write_var_int(stream, temp.len() as i32).await?;
-    stream.write_all(&temp).await?;
-    Ok(())
-}
-
 fn load_conf() -> Config {
     let config_path = Path::new("./config.yml");
     info!("Configuration file: {:?}", config_path);
     Config::load_or_init(config_path)
 }
 
-async fn start_server(config: &Config, server_id: &str) -> Result<()> {
-    let client = Client::new();
-    let mut headers = HeaderMap::new();
-    headers.insert("Authorization", HeaderValue::from_str(&format!("Bearer {}", config.api_key()))?);
-    headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-
-    let url = format!("{}/api/client/servers/{}/power", config.panel_link(), server_id);
-    
-    client.post(url)
-        .headers(headers)
-        .json(&json!({
-            "signal": "start"
-        }))
-        .send()
-        .await?;
-
+async fn write_string(stream: &mut TcpStream, string: &str) -> Result<()> {
+    let mut temp: Cursor<Vec<u8>> = Cursor::new(Vec::new());
+    packet::write_var_int(&mut temp, 0).await?;
+    packet::write_var_int(&mut temp, string.len() as i32).await?;
+    temp.write_all(string.as_bytes()).await?;
+    let temp = temp.into_inner();
+    packet::write_var_int(stream, temp.len() as i32).await?;
+    stream.write_all(&temp).await?;
     Ok(())
 }

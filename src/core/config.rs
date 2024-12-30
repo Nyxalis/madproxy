@@ -34,9 +34,14 @@ pub struct Config {
     pub listen_addr: String,
     pub unknown_host: UnknownHost,
     pub offline_server: OfflineServer,
-    pub auto_start: bool,
-    pub panel_link: String,
-    pub api_key: String,
+    pub backend_server: String,
+    pub port_range: PortRange,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PortRange {
+    pub start: u16,
+    pub end: u16,
 }
 
 impl Default for Config {
@@ -56,9 +61,8 @@ impl Default for Config {
             listen_addr: "0.0.0.0:25565".to_string(),
             unknown_host,
             offline_server,
-            auto_start: true,
-            panel_link: "https://your.panel.link".to_string(),
-            api_key: "your_api_key".to_string(),
+            backend_server: "212.87.213.125".to_string(),
+            port_range: PortRange { start: 25565, end: 25575 },
         }
     }
 }
@@ -134,17 +138,5 @@ impl Config {
                 "text": &self.offline_server.motd.text
             }
         }).to_string()
-    }
-
-    pub fn auto_start(&self) -> bool {
-        self.auto_start
-    }
-
-    pub fn panel_link(&self) -> String {
-        self.panel_link.clone()
-    }
-
-    pub fn api_key(&self) -> String {
-        self.api_key.clone()
     }
 }
